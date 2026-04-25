@@ -1,188 +1,226 @@
+# ===============================
+# 1) Import Library
+# ===============================
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
 
+font_path = "C:/Windows/Fonts/tahoma.ttf"
+thai_font = fm.FontProperties(fname=font_path)
 
+plt.rcParams['font.family'] = thai_font.get_name()
+plt.rcParams['axes.unicode_minus'] = False
+
+# ===============================
+# 2) อ่านไฟล์ข้อมูล
+# ===============================
 df = pd.read_csv('cleansing_water_data.csv')
 
+df_clean = df[df['use_cleansing_water'] == 'ใช้'].copy()
+
+print("--- จำนวนข้อมูลทั้งหมด ---")
 print(df.shape)
-df.head()
+
+print("\n--- จำนวนคนที่ใช้ Cleansing Water ---")
+print(df_clean.shape)
 
 
-#---------------เลือกเฉพาะคนที่ใช้ Cleansing Water
-df_clean = df[df['use_cleansing_water'] == 'ใช้'].copy()
+# ===============================
+# 3) เลือกเฉพาะปัจจัยในการเลือกซื้อ
+# ===============================
+factor_cols = [c for c in df_clean.columns if c.startswith('factor_')]
 
-print("จำนวนข้อมูลทั้งหมด:", df.shape[0])
-print("จำนวนคนที่ใช้ Cleansing Water:", df_clean.shape[0])
-
-
-#----------------เลือกเฉพาะคนที่ใช้ Cleansing Water
-df_clean = df[df['use_cleansing_water'] == 'ใช้'].copy()
-
-print("จำนวนข้อมูลทั้งหมด:", df.shape[0])
-print("จำนวนคนที่ใช้ Cleansing Water:", df_clean.shape[0])
-
-
-#----------------เลือกคอลัมน์ที่จะใช้ทำ Clustering
-factor_cols = [col for col in df_clean.columns if col.startswith('factor_')]
-
+print("\n--- Factor ที่ใช้ทำ Clustering ---")
 print(factor_cols)
 
 
-#-----------------จัดการค่าว่าง
+# ===============================
+# 4) จัดการค่าว่าง
+# ===============================
 for col in factor_cols:
     df_clean[col] = df_clean[col].fillna(df_clean[col].median())
 
-df_clean['concerns'] = df_clean['concerns'].fillna('')
-df_clean['skin_type'] = df_clean['skin_type'].fillna('ไม่ระบุ')
-df_clean['age'] = df_clean['age'].fillna('ไม่ระบุ')
-df_clean['monthly_income'] = df_clean['monthly_income'].fillna('ไม่ระบุ')
+
+# ===============================
+# 5) สร้าง Feature สำหรับ Clustering
+# ===============================
+X = df_clean[factor_cols].copy()
+
+# แปลงคะแนนเป็น pattern การเลือกซื้อ
+X_pattern = X.div(X.sum(axis=1), axis=0)
+X_pattern = X_pattern.fillna(0)
+
+# ผสมคะแนนดิบกับ pattern เพื่อให้ cluster ชัดขึ้น
+X_final = (X * 0.5) + (X_pattern * 0.5)
 
 
-#---------------แปลงข้อมูลตัวอักษรเป็นตัวเลข
-def get_dummies_multiselect(series, prefix):
-    return series.str.get_dummies(sep=',').add_prefix(f'{prefix}_')
-
-concerns_df = get_dummies_multiselect(df_clean['concerns'], 'concern')
-skin_type_df = pd.get_dummies(df_clean['skin_type'], prefix='skin')
-
-le_age = LabelEncoder()
-le_income = LabelEncoder()
-
-df_clean['age_encoded'] = le_age.fit_transform(df_clean['age'])
-df_clean['income_encoded'] = le_income.fit_transform(df_clean['monthly_income'])
-
-
-#-------------รวม Features
-X = pd.concat([
-    df_clean[factor_cols],
-    concerns_df,
-    skin_type_df,
-    df_clean[['age_encoded', 'income_encoded']]
-], axis=1)
-
-print(X.shape)
-X.head()
-
-
-#----------Scaling
+# ===============================
+# 6) Scaling ข้อมูล
+# ===============================
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+X_scaled = scaler.fit_transform(X_final)
 
 
-#------------หา k ด้วย Elbow Method
-inertia = []
-K_range = range(2, 8)
-
-for k in K_range:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    kmeans.fit(X_scaled)
-    inertia.append(kmeans.inertia_)
-
-plt.figure(figsize=(8, 5))
-plt.plot(K_range, inertia, marker='o')
-plt.title('Elbow Method')
-plt.xlabel('Number of Clusters (k)')
-plt.ylabel('Inertia')
-plt.show()
-
-
-#----------------หา k ด้วย Silhouette Score
+# ===============================
+# 7) ตรวจสอบ Silhouette Score
+# ===============================
+K_range = range(2, 7)
 silhouette_scores = []
 
 for k in K_range:
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
-    score = silhouette_score(X_scaled, labels)
+    temp_kmeans = KMeans(
+        n_clusters=k,
+        random_state=42,
+        n_init=100,
+        max_iter=500
+    )
+    
+    temp_labels = temp_kmeans.fit_predict(X_scaled)
+    score = silhouette_score(X_scaled, temp_labels)
     silhouette_scores.append(score)
+
+print("\n--- Silhouette Score ของแต่ละ k ---")
+for k, score in zip(K_range, silhouette_scores):
+    print(f"k = {k}, Silhouette Score = {score:.4f}")
+
 
 plt.figure(figsize=(8, 5))
 plt.plot(K_range, silhouette_scores, marker='o')
-plt.title('Silhouette Score')
-plt.xlabel('Number of Clusters (k)')
-plt.ylabel('Score')
+plt.title('Silhouette Score เพื่อดูจำนวน Cluster ที่เหมาะสม')
+plt.xlabel('จำนวน Cluster')
+plt.ylabel('Silhouette Score')
+plt.tight_layout()
 plt.show()
 
-for k, score in zip(K_range, silhouette_scores):
-    print(f'k = {k}, Silhouette Score = {score:.4f}')
-    
-    
-    
-#--------------สร้าง K-Means Model
+
+# ===============================
+# 8) สร้างโมเดล K-Means จำนวน 3 กลุ่ม
+# ===============================
 best_k = 3
 
-kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+kmeans = KMeans(
+    n_clusters=best_k,
+    random_state=42,
+    n_init=100,
+    max_iter=500
+)
+
 df_clean['cluster'] = kmeans.fit_predict(X_scaled)
 
-df_clean[['age', 'monthly_income', 'skin_type', 'cluster']].head()
-
-
-#---------------ดูจำนวนคนแต่ละกลุ่ม
+print("\n--- จำนวนคนในแต่ละ Cluster ---")
 print(df_clean['cluster'].value_counts().sort_index())
 
-plt.figure(figsize=(6, 4))
-sns.countplot(x='cluster', data=df_clean)
-plt.title('Number of Customers in Each Cluster')
-plt.xlabel('Cluster')
-plt.ylabel('Count')
-plt.show()
 
-
-#--------------วาดกราฟ PCA
+# ===============================
+# 9) ลดมิติด้วย PCA เพื่อวาดกราฟ
+# ===============================
 pca = PCA(n_components=2)
 X_pca = pca.fit_transform(X_scaled)
+
+print("\n--- PCA อธิบายข้อมูลได้รวม ---")
+print(pca.explained_variance_ratio_.sum())
 
 df_clean['pca1'] = X_pca[:, 0]
 df_clean['pca2'] = X_pca[:, 1]
 
+
+# ===============================
+# 10) กราฟแสดง Cluster
+# ===============================
 plt.figure(figsize=(8, 6))
 sns.scatterplot(
     x='pca1',
     y='pca2',
     hue='cluster',
     data=df_clean,
-    s=80
+    palette='Set1',
+    s=90,
+    edgecolor='black'
 )
 
-plt.title('Customer Segmentation using K-Means')
+plt.title('การแบ่งกลุ่มลูกค้า Cleansing Water ด้วย K-Means จำนวน 3 กลุ่ม')
 plt.xlabel('PCA 1')
 plt.ylabel('PCA 2')
+plt.legend(title='Cluster')
+plt.tight_layout()
 plt.show()
 
 
-#---------------วิเคราะห์ค่าเฉลี่ย Factor ของแต่ละ Cluster
+# ===============================
+# 11) กราฟจำนวนคนในแต่ละ Cluster
+# ===============================
+plt.figure(figsize=(6, 4))
+sns.countplot(x='cluster', data=df_clean, palette='Set1')
+plt.title('จำนวนคนในแต่ละ Cluster')
+plt.xlabel('Cluster')
+plt.ylabel('จำนวนคน')
+plt.tight_layout()
+plt.show()
+
+
+# ===============================
+# 12) วิเคราะห์ค่าเฉลี่ย Factor ของแต่ละ Cluster
+# ===============================
 cluster_profile = df_clean.groupby('cluster')[factor_cols].mean()
-cluster_profile
+
+print("\n--- ค่าเฉลี่ยปัจจัยในการเลือกซื้อของแต่ละ Cluster ---")
+print(cluster_profile)
 
 
+# ===============================
+# 13) Heatmap วิเคราะห์ Cluster
+# ===============================
 plt.figure(figsize=(12, 6))
-sns.heatmap(cluster_profile, annot=True, cmap='Blues', fmt='.2f')
-plt.title('Average Purchase Factors by Cluster')
-plt.xlabel('Factors')
+sns.heatmap(cluster_profile, annot=True, cmap='coolwarm', fmt='.2f')
+plt.title('ค่าเฉลี่ยปัจจัยในการเลือกซื้อของแต่ละ Cluster')
+plt.xlabel('ปัจจัยในการเลือกซื้อ')
 plt.ylabel('Cluster')
+plt.tight_layout()
 plt.show()
 
 
-#-----------------ดูลักษณะของแต่ละกลุ่ม
+# ===============================
+# 14) สรุปลักษณะเด่นของแต่ละ Cluster
+# ===============================
+print("\n--- สรุปลักษณะเด่นของแต่ละ Cluster ---")
+
 for cluster in sorted(df_clean['cluster'].unique()):
-    print("=" * 50)
+    print("=" * 60)
     print(f"Cluster {cluster}")
     print("จำนวนคน:", len(df_clean[df_clean['cluster'] == cluster]))
 
-    print("\nประเภทผิวที่เจอบ่อย:")
-    print(df_clean[df_clean['cluster'] == cluster]['skin_type'].value_counts().head(3))
-
-    print("\nช่วงอายุที่เจอบ่อย:")
-    print(df_clean[df_clean['cluster'] == cluster]['age'].value_counts().head(3))
-
     print("\nปัจจัยที่ให้ความสำคัญสูงสุด:")
     print(cluster_profile.loc[cluster].sort_values(ascending=False).head(5))
-    
-    #Export ไฟล์ผลลัพธ์
-    #df_clean.to_csv('cleansing_water_cluster_result.csv', index=False)
+
+    print("\nปัจจัยที่ให้ความสำคัญต่ำสุด:")
+    print(cluster_profile.loc[cluster].sort_values(ascending=True).head(3))
+
+
+# ===============================
+# 15) ตั้งชื่อกลุ่มเบื้องต้น
+# แก้ได้หลังดูค่า cluster_profile จริง
+# ===============================
+cluster_names = {
+    0: 'กลุ่มเน้นความอ่อนโยนและไม่ระคายเคือง',
+    1: 'กลุ่มเน้นประสิทธิภาพการทำความสะอาด',
+    2: 'กลุ่มเน้นการดูแลปัญหาผิวและสิว'
+}
+
+df_clean['cluster_name'] = df_clean['cluster'].map(cluster_names)
+
+print("\n--- ตัวอย่างข้อมูลพร้อมชื่อ Cluster ---")
+print(df_clean[['cluster', 'cluster_name']].head())
+
+
+# ===============================
+# 16) Export ผลลัพธ์
+# ===============================
+# df_clean.to_csv('cleansing_water_cluster_3groups_result.csv', index=False)
+
+# print("\nบันทึกไฟล์เรียบร้อย: cleansing_water_cluster_3groups_result.csv")
